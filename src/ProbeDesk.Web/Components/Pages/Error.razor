@@ -1,0 +1,21 @@
+﻿@page "/Error"
+@using System.Diagnostics
+
+<PageTitle>Error – Blueberry Probe</PageTitle>
+<PageHeader Title="Something went wrong" Subtitle="The request could not be completed. No details are shown here to avoid leaking sensitive information." />
+<div class="pd-container">
+    @if (!string.IsNullOrEmpty(RequestId))
+    {
+        <p class="pd-muted">Reference: <code>@RequestId</code></p>
+    }
+    <a class="pd-btn pd-btn--primary" href="">Back to the workspace</a>
+</div>
+
+@code {
+    [CascadingParameter] private HttpContext? HttpContext { get; set; }
+
+    private string? RequestId { get; set; }
+
+    protected override void OnInitialized() =>
+        RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+}

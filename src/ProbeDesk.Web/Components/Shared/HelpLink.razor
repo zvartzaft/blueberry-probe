@@ -1,0 +1,6 @@
+<a class="pd-help-link" href="help/@Slug" target="_blank" rel="noopener" aria-label="Help: @Label" title="Help: @Label">?</a>
+
+@code {
+    [Parameter, EditorRequired] public string Slug { get; set; } = "getting-started";
+    [Parameter] public string Label { get; set; } = "";
+}

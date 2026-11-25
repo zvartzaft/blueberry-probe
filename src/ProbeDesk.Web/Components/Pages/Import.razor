@@ -1,0 +1,129 @@
+﻿@page "/import"
+@using System.Text.RegularExpressions
+@using ProbeDesk.Import
+@inject CollectionStore Collections
+@inject EnvironmentStore Envs
+@inject AppState App
+
+<PageTitle>Import – Blueberry Probe</PageTitle>
+<PageHeader Title="Import" Subtitle="Bring in requests from Postman (JSON or YAML), .http files, a zip of several files, or a cURL command. Scripts are never executed." HelpSlug="import" />
+
+<div class="pd-container">
+    <section class="pd-card">
+        <h2 class="pd-h2">1. Choose what to import</h2>
+        <div class="pd-seg" role="radiogroup" aria-label="Import format">
+            <button type="button" role="radio" aria-checked="@(_format == "postman" ? "true" : "false")" class="pd-seg-btn @(_format == "postman" ? "is-active" : "")" @onclick='() => _format = "postman"'>Postman (JSON/YAML)</button>
+            <button type="button" role="radio" aria-checked="@(_format == "http" ? "true" : "false")" class="pd-seg-btn @(_format == "http" ? "is-active" : "")" @onclick='() => _format = "http"'>.http / .rest</button>
+            <button type="button" role="radio" aria-checked="@(_format == "zip" ? "true" : "false")" class="pd-seg-btn @(_format == "zip" ? "is-active" : "")" @onclick='() => _format = "zip"'>Zip archive</button>
+            <button type="button" role="radio" aria-checked="@(_format == "curl" ? "true" : "false")" class="pd-seg-btn @(_format == "curl" ? "is-active" : "")" @onclick='() => _format = "curl"'>cURL command</button>
+        </div>
+
+        @if (_format != "curl")
+        {
+            <div class="pd-field">
+                <label class="pd-label" for="file">@(_format == "zip" ? "Zip file (max 10 MB, up to 5000 files: .json, .yaml, .yml, .http, .rest)" : "File (max 5 MB)")</label>
+                <InputFile id="file" OnChange="OnFile" accept=".json,.yaml,.yml,.http,.rest,.zip" />
+            </div>
+        }
+        @if (_format != "zip")
+        {
+        <div class="pd-field">
+            <label class="pd-label" for="text">@(_format == "curl" ? "Paste a cURL command" : "…or paste the content")</label>
+            <textarea id="text" class="pd-input pd-mono" rows="10" @bind="_text" @bind:event="oninput"></textarea>
+        </div>
+        }
+        <button type="button" class="pd-btn pd-btn--primary" @onclick="Parse">Review import</button>
+        @if (_error is not null) { <p class="pd-note pd-note--error" role="alert">@_error</p> }
+    </section>
+
+    @if (_result is not null)
+    {
+        <section class="pd-card" aria-label="Import report">
+            <h2 class="pd-h2">2. Review the import report</h2>
+            <p>Found <strong>@_result.RequestCount</strong> request(s) and <strong>@_result.Environments.Count</strong> environment(s).</p>
+            @if (_result.Report.Items.Count == 0) { <p class="pd-ok">Everything could be translated.</p> }
+            else
+            {
+                <p class="pd-note pd-note--warn">@_result.Report.WarningCount warning(s). These items could not be translated:</p>
+                <details open="@(_result.Report.Items.Count <= 50)">
+                    <summary>Show all @_result.Report.Items.Count message(s)</summary>
+                    <ul>@foreach (var i in _result.Report.Items.OrderBy(x => x.Severity == ReportSeverity.Warning ? 0 : 1)) { <li class="@(i.Severity == ReportSeverity.Warning ? "pd-fail" : "pd-muted")">@i.Message</li> }</ul>
+                </details>
+            }
+            <button type="button" class="pd-btn pd-btn--primary" disabled="@(_saved || _saving || (_result.RequestCount == 0 && _result.Environments.Count == 0))" @onclick="SaveAsync">Save import</button>
+            @if (_saved) { <p class="pd-ok" role="status">Imported. Open the <a href="">workspace</a> or <a href="collections">collections</a>.</p> }
+        </section>
+    }
+</div>
+
+@code {
+    private const long MaxFile = 5 * 1024 * 1024, MaxZip = 10 * 1024 * 1024;
+    private byte[]? _zip;
+    private string _format = "postman", _text = "", _fileName = "Import";
+    private string? _error;
+    private ImportResult? _result;
+    private bool _saved, _saving;
+
+    private async Task OnFile(InputFileChangeEventArgs e)
+    {
+        _error = null;
+        try
+        {
+            if (e.File.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            {
+                _format = "zip"; _text = ""; _fileName = Path.GetFileNameWithoutExtension(e.File.Name);
+                using var ms = new MemoryStream();
+                await e.File.OpenReadStream(MaxZip).CopyToAsync(ms);
+                _zip = ms.ToArray();
+                return;
+            }
+            _zip = null;
+            using var reader = new StreamReader(e.File.OpenReadStream(MaxFile));
+            _text = await reader.ReadToEndAsync();
+            if (e.File.Name.EndsWith(".http", StringComparison.OrdinalIgnoreCase) || e.File.Name.EndsWith(".rest", StringComparison.OrdinalIgnoreCase)) _format = "http";
+            else if (e.File.Name.EndsWith(".json", StringComparison.OrdinalIgnoreCase) || e.File.Name.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) || e.File.Name.EndsWith(".yml", StringComparison.OrdinalIgnoreCase)) _format = "postman";
+            _fileName = Path.GetFileNameWithoutExtension(e.File.Name);
+        }
+        catch (IOException) { _error = "The file is too large or could not be read."; }
+    }
+
+    private void Parse()
+    {
+        _saved = false; _error = null; _result = null;
+        if (_format == "zip" ? _zip is null : string.IsNullOrWhiteSpace(_text)) { _error = _format == "zip" ? "Choose a zip file first." : "There is nothing to import."; return; }
+        try
+        {
+            switch (_format)
+            {
+                case "postman": _result = FileImporter.ImportPostmanText(_text, _fileName); break;
+                case "zip": using (var zs = new MemoryStream(_zip!)) _result = ZipImporter.Import(zs, _fileName); break;
+                case "http": _result = HttpFileParser.Parse(_text, _fileName); break;
+                default:
+                    var (req, report) = CurlParser.Parse(_text);
+                    _result = new ImportResult { Root = new FolderNode { Name = "cURL" } };
+                    if (req is not null) _result.Root.Requests.Add(req);
+                    foreach (var i in report.Items) _result.Report.Items.Add(i);
+                    break;
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException or ArgumentException or System.Text.Json.JsonException or RegexMatchTimeoutException or InvalidDataException)
+        {
+            _result = null;
+            _error = "The content could not be read. Check that it matches the selected format.";
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_result is null || _saving || _saved) return;
+        _saving = true;
+        try
+        {
+            await Collections.ImportTreeAsync(new FolderNode { Folders = _result.RequestCount > 0 ? [_result.Root] : [] });
+            foreach (var env in _result.Environments) { env.Id = Guid.NewGuid(); await Envs.SaveAsync(env); }
+            if (_result.Environments.Count > 0) App.NotifyEnvironmentsChanged();
+            _saved = true;
+        }
+        finally { _saving = false; }
+    }
+}

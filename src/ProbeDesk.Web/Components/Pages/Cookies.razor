@@ -1,0 +1,126 @@
+﻿@page "/cookies"
+@implements IDisposable
+@inject AppState App
+
+<PageTitle>Cookies – Blueberry Probe</PageTitle>
+<PageHeader Title="Cookies" Subtitle="@($"Session cookies for {App.Environment?.Name ?? "no environment"}. Paste them once from your browser; they are stored encrypted and never shown again.")" HelpSlug="cookie-csrf-login">
+</PageHeader>
+
+<div class="pd-container">
+    @if (App.Environment is null)
+    {
+        <section class="pd-card pd-empty-state">
+            <img class="pd-empty-art" src="logo-mark.png" alt="" width="72" height="72" />
+            <p class="pd-empty-title">Select an environment first</p>
+            <p class="pd-muted">Session cookies are stored per environment. Pick one in the header, or create one under Environments.</p>
+        </section>
+    }
+    else
+    {
+        <section class="pd-card">
+            <h2 class="pd-h2">Session status</h2>
+            @if (!App.TryGetBaseUri(out var baseUri))
+            {
+                <p class="pd-note pd-note--warn" role="alert">This environment has no valid Base URL. Set one under Environments so the cookies know which host to belong to.</p>
+            }
+            else
+            {
+                <p class="pd-hint">Cookies are sent to <code>@baseUri.Host</code>.</p>
+            }
+            <ul class="pd-list">
+                <li>Auth cookie (<code>@SessionCookies.AuthCookieName</code>): <strong>@(HasAuth ? "set" : "missing")</strong></li>
+                <li>Antiforgery cookie (<code>@SessionCookies.AntiforgeryPrefix*</code>): <strong>@(HasAntiforgery ? "set" : "missing")</strong></li>
+                <li>CSRF token: <strong>@(App.Environment.AutoCsrf ? "fetched automatically before POST, PUT, PATCH and DELETE" : "not added automatically")</strong> <span class="pd-muted">(change under Environments)</span></li>
+            </ul>
+            <div class="pd-row">
+                <button type="button" class="pd-btn pd-btn--primary" @onclick="TestAsync" disabled="@(_testing || !HasAuth)">@(_testing ? "Testing…" : "Test session")</button>
+                <button type="button" class="pd-btn pd-btn--ghost-danger" @onclick="ClearAsync" disabled="@(!HasAuth && !HasAntiforgery)">Clear cookies</button>
+            </div>
+            @if (_testMessage is not null) { <p class="@(_testOk ? "pd-ok" : "pd-note pd-note--error")" role="status">@_testMessage</p> }
+        </section>
+
+        <section class="pd-card">
+            <h2 class="pd-h2">Paste cookies from your browser</h2>
+            <p class="pd-hint">Sign in in your browser, open the developer tools, Network tab, pick a request to the system and copy the whole <code>Cookie</code> request header. Blueberry Probe keeps only the auth and antiforgery cookies and ignores the rest. Pasting again replaces the stored cookies.</p>
+            @if (_error is not null) { <p class="pd-note pd-note--error" role="alert">@_error</p> }
+            @if (_message is not null) { <p class="pd-ok" role="status">@_message</p> }
+            <div class="pd-field">
+                <label class="pd-label" for="cookie-paste">Cookie header</label>
+                <textarea id="cookie-paste" class="pd-input pd-mono" rows="4" autocomplete="off" spellcheck="false" @bind="_paste" @bind:event="oninput"></textarea>
+            </div>
+            <button type="button" class="pd-btn pd-btn--primary" @onclick="SaveAsync" disabled="@(string.IsNullOrWhiteSpace(_paste))">Save cookies</button>
+        </section>
+
+        <section class="pd-card">
+            <h2 class="pd-h2">Start over</h2>
+            <p class="pd-hint">Starting a new session clears the variables extracted from responses and reloads the stored cookies.</p>
+            <button type="button" class="pd-btn" @onclick="ResetSession">Start a new session</button>
+        </section>
+    }
+</div>
+
+@code {
+    private string _paste = "";
+    private string? _error, _message, _testMessage;
+    private bool _testing, _testOk, _disposed;
+
+    private bool HasAuth => App.Environment is { } e && SessionCookies.HasAuthCookie(e.SessionCookies);
+    private bool HasAntiforgery => App.Environment?.SessionCookies.Any(c => c.Name.StartsWith(SessionCookies.AntiforgeryPrefix, StringComparison.OrdinalIgnoreCase)) == true;
+
+    protected override void OnInitialized() => App.Changed += OnEnv;
+
+    private void OnEnv() => _ = InvokeAsync(() =>
+    {
+        if (_disposed) return;
+        _error = _message = _testMessage = null;
+        StateHasChanged();
+    });
+
+    private async Task SaveAsync()
+    {
+        _error = _message = _testMessage = null;
+        var cookies = SessionCookies.Parse(_paste);
+        if (!SessionCookies.HasAuthCookie(cookies))
+        {
+            _error = $"Could not find the {SessionCookies.AuthCookieName} cookie in the pasted text. Copy the whole Cookie request header.";
+            return;
+        }
+        _paste = "";
+        await App.SetSessionCookiesAsync(cookies);
+        _message = $"Saved {cookies.Count} cookie{(cookies.Count == 1 ? "" : "s")}.";
+    }
+
+    private async Task ClearAsync()
+    {
+        _error = _message = _testMessage = null;
+        await App.SetSessionCookiesAsync([]);
+        _message = "Cookies cleared.";
+    }
+
+    private void ResetSession() { App.ResetSession(); _testMessage = null; }
+
+    private async Task TestAsync()
+    {
+        _testMessage = null;
+        if (!App.TryGetBaseUri(out var baseUri) || App.Environment is not { } env) { _testOk = false; _testMessage = "Set a Base URL for this environment first."; return; }
+        _testing = true;
+        try
+        {
+            var spec = new RequestSpec { Url = new Uri(baseUri, SessionCookies.TestPath).ToString(), Headers = [new HeaderEntry("Accept", "application/json")], FollowRedirects = false };
+            var res = await new HttpExecutor(App.Session, env.AllowedHosts).SendAsync(spec);
+            _testOk = res.StatusCode is >= 200 and < 300;
+            _testMessage = _testOk
+                ? $"The session is valid (HTTP {res.StatusCode})."
+                : res.StatusCode is 301 or 302 or 303 or 307 or 308 or 401 or 403
+                    ? $"The session was rejected (HTTP {res.StatusCode}). It has probably expired: paste a new Cookie header."
+                    : res.StatusCode == 404
+                        ? $"HTTP 404 from {spec.Url}. The Base URL probably isn't the host, or it contains a path. Only scheme and host are used."
+                        : $"The server answered HTTP {res.StatusCode} from {spec.Url}.";
+            await App.PersistSessionCookiesAsync();
+        }
+        catch (Exception ex) { _testOk = false; _testMessage = ErrorText.For(ex); }
+        finally { _testing = false; }
+    }
+
+    public void Dispose() { _disposed = true; App.Changed -= OnEnv; }
+}

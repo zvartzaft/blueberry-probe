@@ -1,0 +1,113 @@
+/* Design tokens. Single source of truth; see .github/skills/ui-design-system and docs/decisions/0008.
+   "Precision light": crisp white and graphite surfaces, 1px lines, one electric-blue accent, tight editorial type.
+   Local font stacks only (no external fonts). */
+:root {
+  --pd-font-ui: "Segoe UI Variable Text", "Segoe UI", Inter, system-ui, -apple-system, sans-serif;
+  --pd-font-display: "Segoe UI Variable Display", "Segoe UI", Inter, system-ui, -apple-system, sans-serif;
+  --pd-font-mono: "Cascadia Mono", "JetBrains Mono", Consolas, ui-monospace, monospace;
+
+  --pd-fs-xs: 0.6875rem;
+  --pd-fs-sm: 0.8125rem;
+  --pd-fs-md: 0.9063rem;
+  --pd-fs-lg: 1.0625rem;
+  --pd-fs-xl: 1.5rem;
+  --pd-fs-hero: 1.75rem;
+
+  --pd-space-1: 4px; --pd-space-2: 8px; --pd-space-3: 12px; --pd-space-4: 16px; --pd-space-6: 24px; --pd-space-8: 32px;
+  --pd-radius: 6px;
+  --pd-radius-lg: 10px;
+  --pd-logo-plate: #ffffff;
+  --pd-radius-pill: 999px;
+
+  --pd-rail-w: 232px;
+  --pd-rail-w-collapsed: 64px;
+  --pd-header-h: 56px;
+  --pd-maxw: 1180px;
+
+  --pd-ease: cubic-bezier(0.2, 0, 0, 1);
+  --pd-dur: 140ms;
+
+  /* Light theme (default) */
+  --pd-bg: #f6f7f9;
+  --pd-surface: #ffffff;
+  --pd-surface-2: #f0f2f5;
+  --pd-text: #14171f;
+  --pd-muted: #596071;
+  --pd-border: #dfe2e8;
+  --pd-border-strong: #c3c8d2;
+
+  --pd-accent: #2447f0;
+  --pd-accent-hover: #1a37c4;
+  --pd-accent-contrast: #ffffff;
+  --pd-accent-soft: #eceffe;
+  --pd-focus-ring: rgb(36 71 240 / 0.28);
+
+  --pd-rail-bg: #12141a;
+  --pd-rail-strong: #ffffff;
+  --pd-rail-text: #c9cedb;
+  --pd-rail-muted: #8b92a5;
+  --pd-rail-hover: #1d2029;
+  --pd-rail-active: #232843;
+  --pd-rail-border: #262a35;
+  --pd-rail-accent: #7d93ff;
+
+  --pd-ok: #14804a;
+  --pd-ok-soft: #e6f5ec;
+  --pd-caution: #8a5a00;
+  --pd-caution-soft: #fdf3dc;
+  --pd-warn-bg: #c42b1c;
+  --pd-warn-text: #ffffff;
+  --pd-warn-soft: #fdebe9;
+  --pd-info: #2447f0;
+
+  --pd-m-get: #14804a;
+  --pd-m-post: #2447f0;
+  --pd-m-put: #9a5b00;
+  --pd-m-patch: #7a3fc4;
+  --pd-m-delete: #c42b1c;
+
+  --pd-overlay: rgb(14 16 22 / 0.5);
+  --pd-shadow: 0 1px 0 rgb(20 23 31 / 0.03);
+  --pd-shadow-pop: 0 16px 48px rgb(20 23 31 / 0.22), 0 0 0 1px var(--pd-border);
+  --pd-diff-add: rgb(20 128 74 / 0.18);
+  --pd-diff-del: rgb(196 43 28 / 0.16);
+}
+
+[data-theme="dark"] {
+  --pd-bg: #0f1116;
+  --pd-surface: #171a21;
+  --pd-surface-2: #1e222b;
+  --pd-text: #e8eaf0;
+  --pd-muted: #9ba2b4;
+  --pd-border: #2a2f3b;
+  --pd-border-strong: #3a4151;
+
+  --pd-accent: #7d93ff;
+  --pd-accent-hover: #a2b2ff;
+  --pd-accent-contrast: #0c1033;
+  --pd-accent-soft: #212745;
+  --pd-focus-ring: rgb(125 147 255 / 0.35);
+
+  --pd-rail-bg: #0a0b0f;
+  --pd-rail-border: #1d2029;
+
+  --pd-ok: #5fd394;
+  --pd-ok-soft: #12291d;
+  --pd-caution: #f2c25b;
+  --pd-caution-soft: #2d2412;
+  --pd-warn-bg: #ff7b6e;
+  --pd-warn-text: #2e0a06;
+  --pd-warn-soft: #301613;
+  --pd-info: #7d93ff;
+
+  --pd-m-get: #5fd394;
+  --pd-m-post: #8da0ff;
+  --pd-m-put: #f2c25b;
+  --pd-m-patch: #c9a2ff;
+  --pd-m-delete: #ff7b6e;
+
+  --pd-overlay: rgb(0 0 0 / 0.62);
+  --pd-shadow-pop: 0 16px 48px rgb(0 0 0 / 0.6), 0 0 0 1px var(--pd-border);
+  --pd-diff-add: rgb(95 211 148 / 0.2);
+  --pd-diff-del: rgb(255 123 110 / 0.2);
+}

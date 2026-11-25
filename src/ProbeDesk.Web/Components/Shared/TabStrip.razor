@@ -1,0 +1,25 @@
+<div class="pd-tabs" role="tablist" aria-label="@Label">
+    @foreach (var t in Tabs)
+    {
+        <button type="button" role="tab" class="pd-tab @(t.Key == Active ? "is-active" : "")" aria-selected="@(t.Key == Active ? "true" : "false")"
+                @onclick="() => Select(t.Key)">
+            @t.Label
+            @if (t.Count > 0) { <span class="pd-count">@t.Count</span> }
+        </button>
+    }
+</div>
+
+@code {
+    public sealed record TabItem(string Key, string Label, int Count = 0);
+
+    [Parameter, EditorRequired] public IReadOnlyList<TabItem> Tabs { get; set; } = [];
+    [Parameter, EditorRequired] public string Active { get; set; } = "";
+    [Parameter] public EventCallback<string> ActiveChanged { get; set; }
+    [Parameter] public string Label { get; set; } = "Sections";
+
+    private Task Select(string key)
+    {
+        Active = key;
+        return ActiveChanged.InvokeAsync(key);
+    }
+}

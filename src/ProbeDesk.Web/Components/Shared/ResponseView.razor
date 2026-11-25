@@ -1,0 +1,175 @@
+@inject IJSRuntime JS
+
+<section class="pd-panel pd-response" aria-label="Response">
+    <div class="pd-panel-head">
+        <h2 class="pd-h2">Response</h2>
+        @if (Result is not null)
+        {
+            var r = Result.Final.Response;
+            <div class="pd-chips">
+                <span class="pd-status @StatusClass(r.StatusCode)" title="HTTP status">@r.StatusCode @r.ReasonPhrase</span>
+                <span class="pd-chip" title="Total time">@((int)r.Elapsed.TotalMilliseconds) ms</span>
+                <span class="pd-chip" title="Time to first byte">TTFB @((int)r.TimeToFirstByte.TotalMilliseconds) ms</span>
+                <span class="pd-chip" title="Response size">@Format(r.SizeBytes)</span>
+            </div>
+        }
+    </div>
+
+    @if (Sending)
+    {
+        <p class="pd-empty" role="status"><span class="pd-spinner" aria-hidden="true"></span> Sending request…</p>
+    }
+    else if (Result is null)
+    {
+        <div class="pd-empty-state">
+            <img class="pd-empty-art" src="logo-mark.png" alt="" width="72" height="72" />
+            <p class="pd-empty-title">No response yet</p>
+            <p class="pd-muted">Enter a URL and press <strong>Send</strong> or <kbd>Ctrl</kbd> + <kbd>Enter</kbd>. The status, headers, cookies and body appear here.</p>
+        </div>
+    }
+    else
+    {
+        var fin = Result.Final.Response;
+        var checks = Result.Steps.Sum(s => s.Assertions.Count);
+        var failed = Result.Steps.Sum(s => s.Assertions.Count(a => !a.Passed));
+        <TabStrip Label="Response sections" Tabs="_tabs(fin, checks, failed)" @bind-Active="_tab" />
+
+        <div class="pd-tabpanel" role="tabpanel">
+            @if (_tab == "body")
+            {
+                @if (fin.RedirectCount > 0)
+                {
+                    <p class="pd-note">Followed @fin.RedirectCount redirect(s) to <code>@fin.FinalUrl</code></p>
+                }
+                @if (fin.BodyTruncated)
+                {
+                    <p class="pd-note pd-note--warn">The response is larger than the display limit and is shown truncated.
+                        @if (fin.SpoolPath is not null) { <a href="download/spool/@Path.GetFileName(fin.SpoolPath)">Save the full response to a file</a> }
+                    </p>
+                }
+                <div class="pd-toolbar">
+                    <label class="pd-check"><input type="checkbox" @bind="_raw" /> Raw</label>
+                    <label class="pd-check"><input type="checkbox" @bind="_showDiff" disabled="@(PreviousBody is null)" /> Compare with previous response</label>
+                    <button type="button" class="pd-btn pd-btn--ghost" @onclick="() => CopyAsync(fin.Body)">Copy body</button>
+                </div>
+                @if (_showDiff && PreviousBody is not null)
+                {
+                    <pre class="pd-pre" aria-label="Response diff">@foreach (var d in Diff(PreviousBody, fin.Body)) { <span class="pd-diff-@d.Kind.ToString().ToLowerInvariant()">@(d.Kind == DiffKind.Added ? "+ " : d.Kind == DiffKind.Removed ? "- " : "  ")@d.Text
+</span> }</pre>
+                }
+                else
+                {
+                    <pre class="pd-pre" aria-label="Response body">@(_raw ? fin.Body : Pretty(fin.Body))</pre>
+                }
+            }
+            else if (_tab == "headers")
+            {
+                <table class="pd-table pd-table--compact">
+                    <tbody>
+                    @foreach (var h in fin.Headers) { <tr><th scope="row">@h.Name</th><td class="pd-mono">@h.Value</td></tr> }
+                    </tbody>
+                </table>
+            }
+            else if (_tab == "cookies")
+            {
+                @if (fin.SetCookies.Count == 0) { <p class="pd-empty">This response did not set any cookies.</p> }
+                else { <pre class="pd-pre">@string.Join("\n", fin.SetCookies)</pre> }
+            }
+            else if (_tab == "flow")
+            {
+                <ol class="pd-flow-result">
+                    @foreach (var s in Result.Steps)
+                    {
+                        <li>
+                            <span class="pd-status @StatusClass(s.Response.StatusCode)">@s.Response.StatusCode</span>
+                            <strong>@s.Name</strong>
+                            <span class="pd-muted">@((int)s.Response.Elapsed.TotalMilliseconds) ms · @Format(s.Response.SizeBytes)</span>
+                            @if (s.Extracted.Count > 0) { <span class="pd-note">saved: @string.Join(", ", s.Extracted)</span> }
+                        </li>
+                    }
+                </ol>
+            }
+            else if (_tab == "checks")
+            {
+                @if (checks == 0) { <p class="pd-empty">No checks defined. Add some under <strong>Checks</strong> in the request editor.</p> }
+                @foreach (var s in Result.Steps)
+                {
+                    @foreach (var a in s.Assertions)
+                    {
+                        <p class="pd-check-row @(a.Passed ? "pd-ok" : "pd-fail")">
+                            <span aria-hidden="true">@(a.Passed ? "✔" : "✘")</span>
+                            @a.Assertion.Kind @a.Assertion.Expression = @a.Assertion.Expected
+                            @if (!a.Passed) { <span>(got: @(a.Actual ?? "nothing"))</span> }
+                            <span class="pd-muted">· @s.Name</span>
+                        </p>
+                    }
+                }
+            }
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter] public FlowResult? Result { get; set; }
+    [Parameter] public bool Sending { get; set; }
+    [Parameter] public string? PreviousBody { get; set; }
+
+    private string _tab = "body";
+    private bool _raw, _showDiff;
+
+    private IReadOnlyList<TabStrip.TabItem> _tabs(ResponseResult fin, int checks, int failed)
+    {
+        var list = new List<TabStrip.TabItem>
+        {
+            new("body", "Body"),
+            new("headers", "Headers", fin.Headers.Count),
+            new("cookies", "Cookies", fin.SetCookies.Count)
+        };
+        if (Result is { Steps.Count: > 1 }) list.Add(new("flow", "Flow", Result.Steps.Count));
+        list.Add(new("checks", failed > 0 ? "Checks ✘" : "Checks", checks));
+        return list;
+    }
+
+    private static string StatusClass(int code) => code switch
+    {
+        >= 500 => "pd-status--5xx",
+        >= 400 => "pd-status--4xx",
+        >= 300 => "pd-status--3xx",
+        _ => "pd-status--2xx"
+    };
+
+    private static string Format(long b) => b < 1024 ? $"{b} B" : b < 1024 * 1024 ? $"{b / 1024.0:0.#} kB" : $"{b / 1024.0 / 1024:0.#} MB";
+
+    // The parent re-renders on every keystroke; cache the expensive work per response.
+    private string? _prettySource, _prettyResult;
+    private string? _diffPrev, _diffBody;
+    private List<DiffLine>? _diffResult;
+
+    private string Pretty(string body)
+    {
+        if (ReferenceEquals(body, _prettySource) && _prettyResult is not null) return _prettyResult;
+        _prettySource = body;
+        return _prettyResult = PrettyCore(body);
+    }
+
+    private List<DiffLine> Diff(string prev, string body)
+    {
+        if (_diffResult is not null && ReferenceEquals(prev, _diffPrev) && ReferenceEquals(body, _diffBody)) return _diffResult;
+        _diffPrev = prev; _diffBody = body;
+        return _diffResult = TextDiff.Diff(prev, body).ToList();
+    }
+
+    private static string PrettyCore(string body)
+    {
+        var t = body.TrimStart();
+        if (t.Length == 0 || (t[0] != '{' && t[0] != '[')) return body;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            return System.Text.Json.JsonSerializer.Serialize(doc.RootElement, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (System.Text.Json.JsonException) { return body; }
+    }
+
+    private async Task CopyAsync(string text) => await JS.InvokeVoidAsync("pd.copy", text);
+}

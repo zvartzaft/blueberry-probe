@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "ProbeDesk.Web",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/src/ProbeDesk.Web/bin/Debug/net10.0/ProbeDesk.Web.dll",
+      "cwd": "${workspaceFolder}/src/ProbeDesk.Web",
+      "env": { "ASPNETCORE_ENVIRONMENT": "Development" }
+    }
+  ]
+}

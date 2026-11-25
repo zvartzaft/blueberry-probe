@@ -1,0 +1,36 @@
+﻿@page "/help"
+@page "/help/{Slug}"
+@inject HelpService HelpSvc
+
+<PageTitle>@(_page?.Title ?? "Help") – Blueberry Probe</PageTitle>
+<PageHeader Title="Help" Subtitle="Guides for sending requests, handling logins and keeping secrets safe." />
+
+<div class="pd-container">
+    <div class="pd-help">
+        <nav class="pd-card" aria-label="Help topics">
+            <input class="pd-input" type="search" aria-label="Search help" placeholder="Search help…" @bind="_query" @bind:event="oninput" />
+            <ul class="pd-help-nav">
+                @foreach (var p in HelpSvc.Search(_query))
+                {
+                    <li><a href="help/@p.Slug" class="@(p.Slug == _page?.Slug ? "active" : null)" aria-current="@(p.Slug == _page?.Slug ? "page" : null)">@p.Title</a></li>
+                }
+            </ul>
+        </nav>
+        <article class="pd-card pd-prose">
+            @if (_page?.Slug == "getting-started")
+            {
+                <div class="pd-logo-plate"><img src="logo-full.png" alt="Blueberry Probe: test, explore, debug APIs" width="240" height="240" /></div>
+            }            @if (_page is null) { <h1>Page not found</h1><p>Choose a topic from the menu.</p> }
+            else { @((MarkupString)HelpService.Render(_page)) }
+        </article>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string? Slug { get; set; }
+    private HelpPage? _page;
+    private string _query = "";
+
+    protected override void OnParametersSet() =>
+        _page = HelpSvc.Find(Slug ?? "getting-started");
+}

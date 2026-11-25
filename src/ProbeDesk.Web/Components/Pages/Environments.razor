@@ -1,0 +1,138 @@
+﻿@page "/environments"
+@inject EnvironmentStore Envs
+@inject AppState App
+@inject ILogger<Environments> Log
+
+<PageTitle>Environments – Blueberry Probe</PageTitle>
+<PageHeader Title="Environments" Subtitle="Named sets of variables, a base URL and safety settings for each system you test." HelpSlug="variables-environments">
+    <button type="button" class="pd-btn pd-btn" @onclick="NewEnv">+ New environment</button>
+</PageHeader>
+
+<div class="pd-container pd-env-layout">
+    <section class="pd-card" aria-label="Environments">
+        <h2 class="pd-h2">Your environments</h2>
+        @if (_list.Count == 0) { <p class="pd-empty">No environments yet.</p> }
+        <ul class="pd-tree">
+            @foreach (var e in _list)
+            {
+                <li>
+                    <button type="button" class="pd-tree-item pd-tree-button @(_env?.Id == e.Id ? "is-selected" : "")" @onclick="() => EditAsync(e.Id)">
+                        <span class="pd-tree-name">@e.Name</span>
+                        @if (e.IsProduction) { <span class="pd-status pd-status--5xx">Production</span> }
+                    </button>
+                </li>
+            }
+        </ul>
+    </section>
+
+    @if (_env is null)
+    {
+        <section class="pd-card pd-empty-state">
+            <img class="pd-empty-art" src="logo-mark.png" alt="" width="72" height="72" />
+            <p class="pd-empty-title">Select or create an environment</p>
+            <p class="pd-muted">Environments let you switch between, for example, a local, test and production system with one click.</p>
+        </section>
+    }
+    else
+    {
+        <section class="pd-card" aria-label="Edit environment">
+            <div class="pd-grid2">
+                <div class="pd-field">
+                    <label class="pd-label" for="en">Name</label>
+                    <input id="en" class="pd-input" @bind="_env.Name" />
+                </div>
+                <div class="pd-field">
+                    <label class="pd-label" for="eb">Base URL</label>
+                    <input id="eb" class="pd-input" placeholder="https://api.example.test" @bind="_env.BaseUrl" />
+                </div>
+            </div>
+
+            <label class="pd-check"><input type="checkbox" @bind="_env.IsProduction" /> Production environment <span class="pd-muted">(shows a warning and asks for confirmation before POST, PUT, PATCH and DELETE)</span></label>
+            <label class="pd-check"><input type="checkbox" @bind="_env.IgnoreSsl" /> Ignore certificate errors</label>
+            @if (_env.IgnoreSsl) { <p class="pd-note pd-note--warn" role="alert">Certificates are not validated. Only use this for systems you trust.</p> }
+            <label class="pd-check"><input type="checkbox" @bind="_env.AutoCsrf" /> Add CSRF token automatically <span class="pd-muted">(fetches a token from <code>/api/authentication/antiforgery/token</code> and sends it as <code>X-CSRF-TOKEN</code> on POST, PUT, PATCH and DELETE to the Base URL; session cookies are managed on the Cookies page)</span></label>
+
+            <div class="pd-field pd-mt">
+                <label class="pd-label" for="eh">Allowed hosts (optional, one per line, wildcards like <code>*.example.test</code> are supported)</label>
+                <textarea id="eh" class="pd-input pd-mono" rows="3" @bind="_hosts"></textarea>
+            </div>
+
+            <h2 class="pd-h2 pd-mt">Variables</h2>
+            <p class="pd-hint">Use them as <code>{{name}}</code> in URLs, headers and bodies. Secret values are write-only: they are masked after saving and only used when a request is sent.</p>
+            @foreach (var v in _env.Variables.ToList())
+            {
+                <div class="pd-kv pd-kv--var">
+                    <input class="pd-input" aria-label="Variable name" placeholder="name" @bind="v.Name" />
+                    <input class="pd-input" aria-label="Variable value" type="@(v.IsSecret ? "password" : "text")" autocomplete="off"
+                           placeholder="@(v.IsSecret && _storedSecrets.Contains(v.Name) ? "•••••• saved – leave empty to keep" : "value")" @bind="v.Value" />
+                    <label class="pd-check"><input type="checkbox" @bind="v.IsSecret" /> Secret</label>
+                    <button type="button" class="pd-icon-btn" aria-label="Remove variable" title="Remove" @onclick="() => _env.Variables.Remove(v)">✕</button>
+                </div>
+            }
+            <button type="button" class="pd-btn pd-btn--ghost" @onclick="() => _env.Variables.Add(new Variable())">+ Add variable</button>
+
+            <div class="pd-row pd-mt">
+                <button type="button" class="pd-btn pd-btn--primary" @onclick="SaveAsync">Save environment</button>
+                @if (!_confirmDelete) { <button type="button" class="pd-btn pd-btn--ghost-danger" @onclick="() => _confirmDelete = true">Delete</button> }
+                else
+                {
+                    <span>Delete <strong>@_env.Name</strong>?</span>
+                    <button type="button" class="pd-btn pd-btn--danger pd-btn--sm" @onclick="DeleteAsync">Yes, delete</button>
+                    <button type="button" class="pd-btn pd-btn--sm" @onclick="() => _confirmDelete = false">Keep</button>
+                }
+            </div>
+            @if (_message is not null) { <p class="pd-ok" role="status">@_message</p> }
+        </section>
+    }
+</div>
+
+@code {
+    private List<EnvironmentSummary> _list = [];
+    private RequestEnvironment? _env;
+    private string _hosts = "";
+    private string? _message;
+    private bool _confirmDelete;
+    private HashSet<string> _storedSecrets = [];
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+    private async Task LoadAsync() => _list = await Envs.ListAsync();
+
+    private void NewEnv() { _env = new RequestEnvironment { Name = "New environment" }; _hosts = ""; _storedSecrets = []; _message = null; _confirmDelete = false; }
+
+    private async Task EditAsync(Guid id)
+    {
+        _env = await Envs.GetAsync(id);
+        if (_env is null) return;
+        // Secrets are write-only in the UI: blank them out after load.
+        _storedSecrets = _env.Variables.Where(v => v.IsSecret).Select(v => v.Name).ToHashSet();
+        foreach (var v in _env.Variables.Where(v => v.IsSecret)) v.Value = "";
+        _hosts = string.Join("\n", _env.AllowedHosts);
+        _message = null; _confirmDelete = false;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_env is null) return;
+        _env.AllowedHosts = _hosts.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        _env.Variables.RemoveAll(v => string.IsNullOrWhiteSpace(v.Name));
+        if (_env.IgnoreSsl) Log.LogWarning("TLS certificate validation is disabled for environment '{Environment}'.", _env.Name);
+        await Envs.SaveAsync(_env);
+        var id = _env.Id;
+        await LoadAsync();
+        await EditAsync(id);
+        if (App.Environment?.Id == id) await App.ReloadAsync();
+        else App.NotifyEnvironmentsChanged();
+        _message = "Saved.";
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_env is null) return;
+        var id = _env.Id;
+        await Envs.DeleteAsync(id);
+        _env = null; _confirmDelete = false;
+        await LoadAsync();
+        if (App.Environment?.Id == id) await App.SelectAsync(null);
+        else App.NotifyEnvironmentsChanged();
+    }
+}

@@ -1,0 +1,20 @@
+<header class="pd-pagehead">
+    <div>
+        <h1 class="pd-pagehead-title">@Title</h1>
+        @if (!string.IsNullOrEmpty(Subtitle)) { <p class="pd-pagehead-sub">@Subtitle</p> }
+    </div>
+    <div class="pd-pagehead-actions">
+        @ChildContent
+        @if (!string.IsNullOrEmpty(HelpSlug))
+        {
+            <a class="pd-btn pd-btn--sm" href="help/@HelpSlug" target="_blank" rel="noopener">Help for this page</a>
+        }
+    </div>
+</header>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public string? Subtitle { get; set; }
+    [Parameter] public string? HelpSlug { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

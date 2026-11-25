@@ -1,0 +1,560 @@
+﻿@page "/"
+@implements IDisposable
+@inject AppState App
+@inject CollectionStore Collections
+@inject HistoryStore History
+@inject UploadStore Uploads
+@inject AppPaths Paths
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Workspace – Blueberry Probe</PageTitle>
+
+<div class="pd-workspace" @onkeydown="OnKeyDown">
+    <RequestSidebar Folders="_folders" Requests="_all" SelectedId="@(_saved ? _req.Id : null)" OnNew="NewRequest" OnRenameRequest="RenameRequestAsync" />
+
+    <div class="pd-editor-col">
+        <section class="pd-panel" aria-label="Request">
+            <div class="pd-panel-head">
+                <input class="pd-title-input" aria-label="Request name" placeholder="Name this request" @bind="_req.Name" @bind:event="oninput" />
+                <div class="pd-actions">
+                    <button type="button" class="pd-btn pd-btn--sm" @onclick="SaveAsync" title="Save this request to your collection">Save</button>
+                    @if (_saved)
+                    {
+                        <button type="button" class="pd-btn pd-btn--sm" @onclick="DuplicateAsync">Duplicate</button>
+                        <button type="button" class="pd-btn pd-btn--sm pd-btn--ghost-danger" @onclick="() => _confirmDelete = true">Delete</button>
+                    }
+                    <HelpLink Slug="getting-started" Label="Getting started" />
+                </div>
+            </div>
+
+            @if (_confirmDelete)
+            {
+                <div class="pd-banner" role="alertdialog" aria-label="Confirm delete">
+                    Delete <strong>@_req.Name</strong>? This cannot be undone.
+                    <button type="button" class="pd-btn pd-btn--danger pd-btn--sm" @onclick="DeleteAsync">Delete</button>
+                    <button type="button" class="pd-btn pd-btn--sm" @onclick="() => _confirmDelete = false">Keep</button>
+                </div>
+            }
+
+            <div class="pd-urlbar">
+                <select class="pd-input pd-method pd-method--@Spec.Method.ToLowerInvariant()" aria-label="HTTP method" @bind="Spec.Method" @bind:after="Refresh">
+                    @foreach (var m in MethodOptions) { <option value="@m">@m</option> }
+                </select>
+                <input id="url" class="pd-input pd-url" aria-label="Request URL" placeholder="https://api.example.test/items or /path using the environment base URL"
+                       autocomplete="off" @bind="Spec.Url" @bind:event="oninput" @bind:after="Refresh" />
+                @if (_sending) { <button type="button" class="pd-btn pd-btn--lg" @onclick="Cancel">Cancel</button> }
+                else { <button type="button" class="pd-btn pd-btn--primary pd-btn--lg" @onclick="() => SendAsync(false)" title="Ctrl+Enter">Send</button> }
+            </div>
+
+            @if (_confirmPending)
+            {
+                <div class="pd-banner pd-banner--danger" role="alertdialog" aria-label="Confirm production request">
+                    <strong>Production:</strong> this flow sends a request that can change data (<strong>@Spec.Method</strong>) to <strong>@App.Environment?.Name</strong>. This may change real data.
+                    <button type="button" class="pd-btn pd-btn--danger pd-btn--sm" @onclick="() => SendAsync(true)">Confirm and send</button>
+                    <button type="button" class="pd-btn pd-btn--sm" @onclick="() => _confirmPending = false">Cancel</button>
+                </div>
+            }
+            @if (_error is not null) { <p class="pd-note pd-note--error" role="alert">@_error</p> }
+            @if (_info is not null) { <p class="pd-note" role="status">@_info</p> }
+            @if (_missing.Count > 0)
+            {
+                <p class="pd-note pd-note--warn">Undefined variables: <code>@string.Join(", ", _missing)</code>. Define them under <a href="environments">Environments</a> or extract them in a flow step.</p>
+            }
+
+            <TabStrip Label="Request sections" Tabs="RequestTabs()" @bind-Active="_tab" />
+
+            <div class="pd-tabpanel" role="tabpanel">
+                @switch (_tab)
+                {
+                    case "params":
+                        <p class="pd-hint">Query parameters are added to the URL. Use <code>{{variable}}</code> to insert values from the environment.</p>
+                        <KeyValueEditor Items="_queryRows" OnChange="Refresh" NameLabel="Parameter" ValueLabel="Value" AddLabel="Add parameter" EmptyText="No query parameters." />
+                        break;
+
+                    case "headers":
+                        <p class="pd-hint">Headers sent with the request. <code>Content-Type</code> is set automatically from the body.</p>
+                        <KeyValueEditor Items="_headerRows" OnChange="Refresh" NameLabel="Header" ValueLabel="Value" AddLabel="Add header" EmptyText="No custom headers." />
+                        break;
+
+                    case "body":
+                        <div class="pd-seg" role="radiogroup" aria-label="Body type">
+                            @foreach (var (type, label) in BodyTypes)
+                            {
+                                <button type="button" role="radio" aria-checked="@(Spec.BodyType == type ? "true" : "false")" class="pd-seg-btn @(Spec.BodyType == type ? "is-active" : "")"
+                                        @onclick="() => SetBodyType(type)">@label</button>
+                            }
+                        </div>
+                        @if (Spec.BodyType == BodyType.None) { <p class="pd-empty">This request has no body.</p> }
+                        @if (Spec.BodyType == BodyType.Raw)
+                        {
+                            <div class="pd-field">
+                                <label class="pd-label" for="ct">Content type</label>
+                                <input id="ct" class="pd-input" list="content-types" @bind="Spec.ContentType" @bind:event="oninput" @bind:after="Refresh" />
+                                <datalist id="content-types">@foreach (var c in ContentTypes) { <option value="@c"></option> }</datalist>
+                            </div>
+                            <div class="pd-field">
+                                <label class="pd-label" for="body">Body</label>
+                                <textarea id="body" class="pd-input pd-mono pd-code" rows="12" spellcheck="false" @bind="Spec.Body" @bind:event="oninput" @bind:after="Refresh"></textarea>
+                            </div>
+                            <button type="button" class="pd-btn pd-btn--ghost pd-btn--sm" @onclick="FormatJson">Format JSON</button>
+                        }
+                        @if (Spec.BodyType is BodyType.FormUrlEncoded or BodyType.Multipart)
+                        {
+                            @if (Spec.BodyType == BodyType.Multipart) { <p class="pd-hint">Tick <strong>File</strong> on a row to upload a file. <HelpLink Slug="file-uploads" Label="File uploads" /></p> }
+                            @for (var i = 0; i < Spec.FormFields.Count; i++)
+                            {
+                                var f = Spec.FormFields[i];
+                                <div class="pd-kv pd-kv--form">
+                                    <input class="pd-input" aria-label="Field name" placeholder="Field name" @bind="f.Name" @bind:event="oninput" @bind:after="Refresh" />
+                                    @if (f.IsFile)
+                                    {
+                                        <div class="pd-file">
+                                            <span class="pd-file-name">@(f.FileName.Length > 0 ? f.FileName : "No file chosen")</span>
+                                            <InputFile class="pd-file-input" OnChange="e => PickFile(f, e)" aria-label="Choose file" />
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <input class="pd-input" aria-label="Field value" placeholder="Value" @bind="f.Value" @bind:event="oninput" @bind:after="Refresh" />
+                                    }
+                                    @if (Spec.BodyType == BodyType.Multipart)
+                                    {
+                                        <label class="pd-check"><input type="checkbox" @bind="f.IsFile" @bind:after="Refresh" /> File</label>
+                                    }
+                                    <button type="button" class="pd-icon-btn" aria-label="Remove field" title="Remove" @onclick="() => { Spec.FormFields.Remove(f); Refresh(); }">✕</button>
+                                </div>
+                            }
+                            <button type="button" class="pd-btn pd-btn--ghost" @onclick="() => { Spec.FormFields.Add(new FormField()); Refresh(); }">+ Add field</button>
+                        }
+                        @if (Spec.BodyType == BodyType.Binary)
+                        {
+                            <div class="pd-file pd-file--block">
+                                <span class="pd-file-name">@(Spec.BinaryFilePath.Length > 0 ? Path.GetFileName(Spec.BinaryFilePath) : "No file chosen")</span>
+                                <InputFile class="pd-file-input" OnChange="PickBinary" aria-label="Choose file" />
+                            </div>
+                            <div class="pd-field">
+                                <label class="pd-label" for="bct">Content type</label>
+                                <input id="bct" class="pd-input" list="content-types" @bind="Spec.ContentType" @bind:event="oninput" @bind:after="Refresh" />
+                            </div>
+                        }
+                        break;
+
+                    case "auth":
+                        <div class="pd-field">
+                            <label class="pd-label" for="auth">Authentication</label>
+                            <select id="auth" class="pd-input" @bind="Spec.Auth.Kind" @bind:after="Refresh">
+                                <option value="@AuthKind.None">None</option>
+                                <option value="@AuthKind.Bearer">Bearer token</option>
+                                <option value="@AuthKind.Basic">Basic (username and password)</option>
+                                <option value="@AuthKind.OAuth2ClientCredentials">OAuth 2.0 client credentials</option>
+                            </select>
+                        </div>
+                        <p class="pd-hint">Secrets are masked in the preview and never written to history or exports. Prefer <code>{{secret_variable}}</code> over typing values here.</p>
+                        @if (Spec.Auth.Kind == AuthKind.Bearer)
+                        {
+                            <div class="pd-field">
+                                <label class="pd-label" for="tok">Token</label>
+                                <input id="tok" class="pd-input" type="password" autocomplete="off" placeholder="Token or {{variable}}" @bind="Spec.Auth.Token" @bind:event="oninput" @bind:after="Refresh" />
+                            </div>
+                        }
+                        @if (Spec.Auth.Kind == AuthKind.Basic)
+                        {
+                            <div class="pd-grid2">
+                                <div class="pd-field">
+                                    <label class="pd-label" for="usr">Username</label>
+                                    <input id="usr" class="pd-input" autocomplete="off" @bind="Spec.Auth.Username" @bind:event="oninput" @bind:after="Refresh" />
+                                </div>
+                                <div class="pd-field">
+                                    <label class="pd-label" for="pwd">Password</label>
+                                    <input id="pwd" class="pd-input" type="password" autocomplete="off" @bind="Spec.Auth.Password" @bind:event="oninput" @bind:after="Refresh" />
+                                </div>
+                            </div>
+                        }
+                        @if (Spec.Auth.Kind == AuthKind.OAuth2ClientCredentials)
+                        {
+                            <div class="pd-field">
+                                <label class="pd-label" for="tu">Token URL</label>
+                                <input id="tu" class="pd-input" @bind="Spec.Auth.TokenUrl" @bind:event="oninput" />
+                            </div>
+                            <div class="pd-grid2">
+                                <div class="pd-field">
+                                    <label class="pd-label" for="cid">Client ID</label>
+                                    <input id="cid" class="pd-input" autocomplete="off" @bind="Spec.Auth.ClientId" @bind:event="oninput" />
+                                </div>
+                                <div class="pd-field">
+                                    <label class="pd-label" for="cs">Client secret</label>
+                                    <input id="cs" class="pd-input" type="password" autocomplete="off" placeholder="Secret or {{variable}}" @bind="Spec.Auth.ClientSecret" @bind:event="oninput" />
+                                </div>
+                            </div>
+                            <div class="pd-field">
+                                <label class="pd-label" for="sc">Scope (optional)</label>
+                                <input id="sc" class="pd-input" @bind="Spec.Auth.Scope" @bind:event="oninput" />
+                            </div>
+                        }
+                        break;
+
+                    case "flow":
+                        <p class="pd-hint">Chain requests, for example a login that needs a CSRF token. The steps run in order, share one cookie session and can pass values on through variables. <HelpLink Slug="cookie-csrf-login" Label="Cookie and CSRF login" /></p>
+                        <ol class="pd-stepper">
+                            @for (var i = 0; i < _req.RunBefore.Count; i++)
+                            {
+                                var idx = i;
+                                var id = _req.RunBefore[i];
+                                <li class="pd-step">
+                                    <span class="pd-step-num">@(idx + 1)</span>
+                                    <div class="pd-step-body">
+                                        <strong>@(_all.FirstOrDefault(r => r.Id == id)?.Name ?? "(missing request)")</strong>
+                                        <span class="pd-muted">Runs first</span>
+                                    </div>
+                                    <button type="button" class="pd-icon-btn" aria-label="Move step up" title="Move up" disabled="@(idx == 0)" @onclick="() => MoveStep(idx, -1)">↑</button>
+                                    <button type="button" class="pd-icon-btn" aria-label="Move step down" title="Move down" disabled="@(idx == _req.RunBefore.Count - 1)" @onclick="() => MoveStep(idx, 1)">↓</button>
+                                    <button type="button" class="pd-icon-btn" aria-label="Remove step" title="Remove" @onclick="() => _req.RunBefore.RemoveAt(idx)">✕</button>
+                                </li>
+                            }
+                            <li class="pd-step pd-step--main">
+                                <span class="pd-step-num">@(_req.RunBefore.Count + 1)</span>
+                                <div class="pd-step-body">
+                                    <strong>@(string.IsNullOrWhiteSpace(_req.Name) ? "This request" : _req.Name)</strong>
+                                    <span class="pd-muted">This request</span>
+                                </div>
+                            </li>
+                        </ol>
+                        <div class="pd-row">
+                            <select class="pd-input" aria-label="Add a step to run first" @bind="_stepToAdd">
+                                <option value="">Add a request to run first…</option>
+                                @foreach (var r in _all.Where(r => r.Id != _req.Id && !_req.RunBefore.Contains(r.Id))) { <option value="@r.Id">@r.Method @r.Name</option> }
+                            </select>
+                            <button type="button" class="pd-btn" @onclick="AddStep">Add step</button>
+                        </div>
+
+                        <h3 class="pd-h3">Save values from this response</h3>
+                        <p class="pd-hint">Extract a value (for example a CSRF token) into a variable you can use as <code>{{variable}}</code> in later requests.</p>
+                        @foreach (var x in _req.Extractors.ToList())
+                        {
+                            <div class="pd-kv pd-kv--extract">
+                                <select class="pd-input" aria-label="Where to look" @bind="x.Source">
+                                    <option value="@ExtractSource.Body">Response body</option>
+                                    <option value="@ExtractSource.Header">Response header</option>
+                                    <option value="@ExtractSource.Cookie">Cookie</option>
+                                </select>
+                                <select class="pd-input" aria-label="How to match" @bind="x.Kind">
+                                    <option value="@ExtractKind.Regex">Regex</option>
+                                    <option value="@ExtractKind.JsonPath">JSONPath</option>
+                                    <option value="@ExtractKind.Css">CSS selector</option>
+                                    <option value="@ExtractKind.Name">By name</option>
+                                </select>
+                                <input class="pd-input" aria-label="Expression" placeholder="Expression" @bind="x.Expression" @bind:event="oninput" />
+                                <input class="pd-input" aria-label="Variable name" placeholder="Save as variable" @bind="x.TargetVariable" @bind:event="oninput" />
+                                <button type="button" class="pd-icon-btn" aria-label="Remove extractor" title="Remove" @onclick="() => _req.Extractors.Remove(x)">✕</button>
+                            </div>
+                        }
+                        <button type="button" class="pd-btn pd-btn--ghost" @onclick="() => _req.Extractors.Add(new Extractor())">+ Add extractor</button>
+                        break;
+
+                    case "checks":
+                        <p class="pd-hint">Checks are evaluated against the response and shown as pass or fail. They also count when you run a whole folder.</p>
+                        @foreach (var a in _req.Assertions.ToList())
+                        {
+                            <div class="pd-kv pd-kv--check">
+                                <select class="pd-input" aria-label="Check type" @bind="a.Kind">
+                                    <option value="@AssertionKind.Status">Status code</option>
+                                    <option value="@AssertionKind.Header">Header</option>
+                                    <option value="@AssertionKind.JsonPath">JSON value</option>
+                                </select>
+                                @if (a.Kind != AssertionKind.Status)
+                                {
+                                    <input class="pd-input" aria-label="Header name or JSONPath" placeholder="Header name or $.path" @bind="a.Expression" @bind:event="oninput" />
+                                }
+                                <input class="pd-input" aria-label="Expected value" placeholder="Expected (for example 200 or 2xx)" @bind="a.Expected" @bind:event="oninput" />
+                                <button type="button" class="pd-icon-btn" aria-label="Remove check" title="Remove" @onclick="() => _req.Assertions.Remove(a)">✕</button>
+                            </div>
+                        }
+                        @if (_req.Assertions.Count == 0) { <p class="pd-empty">No checks yet.</p> }
+                        <button type="button" class="pd-btn pd-btn--ghost" @onclick="AddAssertion">+ Add check</button>
+                        break;
+
+                    case "settings":
+                        <label class="pd-check"><input type="checkbox" @bind="Spec.FollowRedirects" /> Follow redirects automatically <span class="pd-muted">(turn off to inspect 3xx responses and their <code>Set-Cookie</code>)</span></label>
+                        <div class="pd-grid2">
+                            <div class="pd-field">
+                                <label class="pd-label" for="to">Timeout (seconds)</label>
+                                <input id="to" class="pd-input" type="number" min="1" max="600" @bind="Spec.TimeoutSeconds" />
+                            </div>
+                            <div class="pd-field">
+                                <label class="pd-label" for="folder">Folder</label>
+                                <select id="folder" class="pd-input" @bind="_req.FolderId">
+                                    <option value="@((Guid?)null)">No folder</option>
+                                    @foreach (var f in _folders) { <option value="@f.Id">@f.Name</option> }
+                                </select>
+                            </div>
+                        </div>
+                        break;
+
+                    case "preview":
+                        <p class="pd-hint">The final request after variable substitution. Secrets are masked, so it is safe to copy and share.</p>
+                        <pre class="pd-pre" aria-label="cURL preview">@_preview</pre>
+                        <button type="button" class="pd-btn" @onclick="CopyCurl">Copy as cURL</button>
+                        break;
+                }
+            </div>
+        </section>
+
+        <ResponseView Result="_result" Sending="_sending" PreviousBody="_prevBody" />
+    </div>
+</div>
+
+@code {
+    private static readonly string[] Methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"];
+    private static readonly string[] ContentTypes = ["application/json", "application/xml", "text/plain", "text/html", "application/octet-stream"];
+    private static readonly HashSet<string> ReadOnlyMethods = new(StringComparer.OrdinalIgnoreCase) { "GET", "HEAD", "OPTIONS" };
+    private static readonly (BodyType, string)[] BodyTypes =
+    [
+        (BodyType.None, "None"), (BodyType.Raw, "Raw"), (BodyType.FormUrlEncoded, "Form (URL-encoded)"),
+        (BodyType.Multipart, "Multipart form"), (BodyType.Binary, "Binary file")
+    ];
+
+    [SupplyParameterFromQuery(Name = "id")] public Guid? Id { get; set; }
+
+    private SavedRequest _req = new();
+    private RequestSpec Spec => _req.Spec;
+    private bool _saved, _sending, _confirmPending, _confirmDelete;
+    private string _tab = "body", _preview = "", _stepToAdd = "";
+    private string? _error, _info, _prevBody;
+    private List<Kv> _headerRows = [], _queryRows = [];
+    private List<string> _missing = [];
+    private List<RequestSummary> _all = [];
+    private List<Folder> _folders = [];
+    private FlowResult? _result;
+    private CancellationTokenSource? _cts;
+    private Guid? _loadedId;
+    private bool _disposed;
+
+    private IEnumerable<string> MethodOptions => Methods.Contains(Spec.Method) ? Methods : Methods.Append(Spec.Method);
+
+    private IReadOnlyList<TabStrip.TabItem> RequestTabs() =>
+    [
+        new("params", "Params", _queryRows.Count(q => q.Name.Length > 0)),
+        new("headers", "Headers", _headerRows.Count(h => h.Name.Length > 0)),
+        new("body", "Body", Spec.BodyType == BodyType.None ? 0 : 1),
+        new("auth", "Auth", Spec.Auth.Kind == AuthKind.None ? 0 : 1),
+        new("flow", "Flow", _req.RunBefore.Count + _req.Extractors.Count),
+        new("checks", "Checks", _req.Assertions.Count),
+        new("settings", "Settings"),
+        new("preview", "Preview")
+    ];
+
+    protected override async Task OnInitializedAsync()
+    {
+        App.Changed += OnEnvChanged;
+        await ReloadListsAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Id == _loadedId) return;
+        _loadedId = Id;
+        if (Id is { } id && await Collections.GetRequestAsync(id) is { } r) Load(r, true);
+        else if (Id is null) Load(new SavedRequest(), false);
+    }
+
+    private async Task ReloadListsAsync()
+    {
+        _all = await Collections.ListRequestsAsync();
+        _folders = await Collections.ListFoldersAsync();
+    }
+
+    private void OnEnvChanged() => _ = InvokeAsync(() =>
+    {
+        if (_disposed) return;
+        Refresh();
+        StateHasChanged();
+    });
+
+    private void Load(SavedRequest r, bool saved)
+    {
+        _req = r; _saved = saved; _result = null; _error = null; _info = null; _prevBody = null; _confirmDelete = false;
+        _headerRows = Spec.Headers.Select(h => new Kv { Name = h.Name, Value = h.Value }).ToList();
+        _queryRows = Spec.QueryParams.Select(q => new Kv { Name = q.Name, Value = q.Value }).ToList();
+        Refresh();
+    }
+
+    private void NewRequest() { _loadedId = null; Nav.NavigateTo(""); Load(new SavedRequest(), false); }
+
+    private void SyncRows()
+    {
+        Spec.Headers = _headerRows.Where(h => h.Name.Trim().Length > 0).Select(h => new HeaderEntry(h.Name.Trim(), h.Value)).ToList();
+        Spec.QueryParams = _queryRows.Where(q => q.Name.Trim().Length > 0).Select(q => new HeaderEntry(q.Name.Trim(), q.Value)).ToList();
+    }
+
+    private void Refresh()
+    {
+        SyncRows();
+        _missing = [];
+        try
+        {
+            var runner = new FlowRunner(App.Session, App.Environment);
+            _missing = VariableResolver.Missing(Spec, runner.CurrentVariables()).ToList();
+            _preview = CurlBuilder.Build(runner.Resolve(Spec, masked: true));
+        }
+        catch (Exception ex) { _preview = "Preview unavailable: " + ErrorText.For(ex); }
+    }
+
+    private void SetBodyType(BodyType type) { Spec.BodyType = type; Refresh(); }
+
+    private void FormatJson()
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(Spec.Body);
+            Spec.Body = System.Text.Json.JsonSerializer.Serialize(doc.RootElement, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            Refresh();
+        }
+        catch (System.Text.Json.JsonException) { _error = "The body is not valid JSON."; }
+    }
+
+    private async Task PickFile(FormField f, InputFileChangeEventArgs e) =>
+        await Upload(e.File, path => { f.FilePath = path; f.FileName = e.File.Name; f.MimeType = string.IsNullOrEmpty(e.File.ContentType) ? "application/octet-stream" : e.File.ContentType; });
+
+    private async Task PickBinary(InputFileChangeEventArgs e) =>
+        await Upload(e.File, path => Spec.BinaryFilePath = path);
+
+    private async Task Upload(IBrowserFile file, Action<string> assign)
+    {
+        _error = null;
+        try
+        {
+            await using var s = file.OpenReadStream(Uploads.MaxBytes);
+            assign(await Uploads.SaveAsync(s, file.Name));
+            Refresh();
+        }
+        catch (Exception ex) when (ex is UploadTooLargeException or IOException)
+        { _error = $"The file is too large (limit {Uploads.MaxBytes / 1024 / 1024} MB)."; }
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.CtrlKey && e.Key == "Enter" && !_sending) await SendAsync(false);
+    }
+
+    private async Task SendAsync(bool confirmed)
+    {
+        _error = null; _info = null; _confirmPending = false;
+        SyncRows();
+        var env = App.Environment;
+        if (string.IsNullOrWhiteSpace(Spec.Url)) { _error = "Enter a URL first."; return; }
+
+        _sending = true;
+        _cts = new CancellationTokenSource();
+        var token = _cts.Token;
+        try
+        {
+            var lookup = await LoadChainAsync();
+            var plan = FlowRunner.Plan(_req, id => lookup.GetValueOrDefault(id));
+            // Every step of the flow counts, not just the request you pressed Send on.
+            if (env?.IsProduction == true && !confirmed && plan.Any(p => !ReadOnlyMethods.Contains(p.Spec.Method)))
+            {
+                _confirmPending = true;
+                return;
+            }
+            var runner = new FlowRunner(App.Session, env, Paths.Spool, Paths.Uploads);
+            var result = await runner.RunAsync(_req, id => lookup.GetValueOrDefault(id), token);
+
+            _prevBody = _result?.Final.Response.Body;
+            _result = result;
+            for (var i = 0; i < result.Steps.Count; i++)
+            {
+                var r = result.Steps[i].Response;
+                await History.AddAsync(plan[i].Spec.Method, r.FinalUrl, r.StatusCode, (long)r.Elapsed.TotalMilliseconds);
+            }
+            if (env?.IgnoreSsl == true) _info = "Certificate errors are ignored in this environment.";
+        }
+        catch (Exception ex) { _error = ErrorText.For(ex); }
+        finally
+        {
+            await App.PersistSessionCookiesAsync();
+            _sending = false;
+            _cts?.Dispose();
+            _cts = null;
+            Refresh();
+        }
+    }
+
+    private async Task<Dictionary<Guid, SavedRequest>> LoadChainAsync()
+    {
+        var map = new Dictionary<Guid, SavedRequest> { [_req.Id] = _req };
+        var queue = new Queue<SavedRequest>([_req]);
+        while (queue.Count > 0)
+            foreach (var id in queue.Dequeue().RunBefore.Where(id => !map.ContainsKey(id)))
+                if (await Collections.GetRequestAsync(id) is { } dep) { map[id] = dep; queue.Enqueue(dep); }
+        return map;
+    }
+
+    private void Cancel() => _cts?.Cancel();
+
+    private void AddAssertion() => _req.Assertions.Add(new Assertion { Kind = AssertionKind.Status, Expected = "2xx" });
+
+    private async Task CopyCurl()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("pd.copy", _preview);
+            _info = "Copied as cURL (secrets are masked).";
+        }
+        catch (JSException) { _error = "Could not access the clipboard."; }
+    }
+
+    private async Task SaveAsync()
+    {
+        SyncRows();
+        if (string.IsNullOrWhiteSpace(_req.Name)) _req.Name = $"{Spec.Method} {Spec.Url}".Trim();
+        await Collections.SaveRequestAsync(_req);
+        _saved = true; _loadedId = _req.Id;
+        await ReloadListsAsync();
+        _info = "Saved.";
+        Nav.NavigateTo($"?id={_req.Id}");
+    }
+
+    private async Task RenameRequestAsync((Guid Id, string Name) rename)
+    {
+        await Collections.RenameRequestAsync(rename.Id, rename.Name);
+        if (_req.Id == rename.Id) _req.Name = rename.Name;
+        await ReloadListsAsync();
+    }
+
+    private async Task DuplicateAsync()
+    {
+        if (await Collections.DuplicateRequestAsync(_req.Id) is { } copy)
+        {
+            await ReloadListsAsync();
+            Nav.NavigateTo($"?id={copy.Id}");
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        await Collections.DeleteRequestAsync(_req.Id);
+        await ReloadListsAsync();
+        NewRequest();
+    }
+
+    private void AddStep()
+    {
+        if (Guid.TryParse(_stepToAdd, out var id) && !_req.RunBefore.Contains(id)) _req.RunBefore.Add(id);
+        _stepToAdd = "";
+    }
+
+    private void MoveStep(int index, int delta)
+    {
+        var target = index + delta;
+        if (target < 0 || target >= _req.RunBefore.Count) return;
+        (_req.RunBefore[index], _req.RunBefore[target]) = (_req.RunBefore[target], _req.RunBefore[index]);
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        App.Changed -= OnEnvChanged;
+        _cts?.Cancel();
+    }
+}

@@ -1,0 +1,8 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "build", "type": "process", "command": "dotnet", "args": ["build", "ProbeDesk.slnx"], "group": "build", "problemMatcher": "$msCompile" },
+    { "label": "test", "type": "process", "command": "dotnet", "args": ["test", "ProbeDesk.slnx"], "group": "test", "problemMatcher": "$msCompile" },
+    { "label": "watch", "type": "process", "command": "dotnet", "args": ["watch", "run", "--project", "src/ProbeDesk.Web"], "isBackground": true, "problemMatcher": [] }
+  ]
+}

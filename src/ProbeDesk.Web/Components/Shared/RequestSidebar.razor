@@ -1,0 +1,106 @@
+<aside class="pd-sidebar" aria-label="Saved requests">
+    <div class="pd-sidebar-head">
+        <h2 class="pd-h2">Requests</h2>
+        <button type="button" class="pd-btn pd-btn--primary pd-btn--sm" @onclick="OnNew">+ New</button>
+    </div>
+    <input class="pd-input" type="search" aria-label="Search saved requests" placeholder="Search requests…" @bind="_query" @bind:event="oninput" />
+
+    @if (Requests.Count == 0)
+    {
+        <p class="pd-empty">Nothing saved yet. Build a request and press <strong>Save</strong>.</p>
+    }
+    else if (_query.Length > 0)
+    {
+        <ul class="pd-tree">
+            @foreach (var r in Requests.Where(r => r.Name.Contains(_query, StringComparison.OrdinalIgnoreCase) || r.Method.Contains(_query, StringComparison.OrdinalIgnoreCase)))
+            {
+                <li>@Item(r)</li>
+            }
+        </ul>
+    }
+    else
+    {
+        @Tree(null)
+    }
+</aside>
+
+@code {
+    [Parameter] public IReadOnlyList<Folder> Folders { get; set; } = [];
+    [Parameter] public IReadOnlyList<RequestSummary> Requests { get; set; } = [];
+    [Parameter] public Guid? SelectedId { get; set; }
+    [Parameter] public EventCallback OnNew { get; set; }
+    [Parameter] public EventCallback<(Guid Id, string Name)> OnRenameRequest { get; set; }
+
+    private string _query = "";
+    private Guid? _editingId;
+    private string _editName = "";
+
+    private RenderFragment Item(RequestSummary r) => __builder =>
+    {
+        @if (_editingId == r.Id)
+        {
+            <div class="pd-tree-rename">
+                <input class="pd-input" aria-label="Request name" @bind="_editName" @bind:event="oninput" @onkeydown="e => RenameKeyDown(e, r.Id)" />
+                <button type="button" class="pd-btn pd-btn--sm" disabled="@string.IsNullOrWhiteSpace(_editName)" @onclick="() => SaveRenameAsync(r.Id)">Save</button>
+                <button type="button" class="pd-btn pd-btn--sm" @onclick="CancelRename">Cancel</button>
+            </div>
+        }
+        else
+        {
+            <div class="pd-tree-entry">
+                <a href="?id=@r.Id" class="pd-tree-item @(r.Id == SelectedId ? "is-selected" : "")" aria-current="@(r.Id == SelectedId ? "true" : null)">
+                    <span class="pd-method-badge @MethodClass(r.Method)">@Short(r.Method)</span>
+                    <span class="pd-tree-name">@r.Name</span>
+                </a>
+                <button type="button" class="pd-icon-btn" aria-label="Rename @r.Name" title="Rename" @onclick="() => BeginRename(r)">✎</button>
+            </div>
+        }
+    };
+
+    private void BeginRename(RequestSummary request)
+    {
+        _editingId = request.Id;
+        _editName = request.Name;
+    }
+
+    private async Task SaveRenameAsync(Guid id)
+    {
+        if (string.IsNullOrWhiteSpace(_editName)) return;
+        await OnRenameRequest.InvokeAsync((id, _editName.Trim()));
+        CancelRename();
+    }
+
+    private void CancelRename()
+    {
+        _editingId = null;
+        _editName = "";
+    }
+
+    private async Task RenameKeyDown(KeyboardEventArgs e, Guid id)
+    {
+        if (e.Key == "Enter") await SaveRenameAsync(id);
+        else if (e.Key == "Escape") CancelRename();
+    }
+
+    private RenderFragment Tree(Guid? parent) => __builder =>
+    {
+        <ul class="pd-tree">
+        @foreach (var f in Folders.Where(f => f.ParentId == parent))
+        {
+            <li>
+                <details open>
+                    <summary class="pd-tree-folder">@f.Name</summary>
+                    @Tree(f.Id)
+                </details>
+            </li>
+        }
+        @foreach (var r in Requests.Where(r => r.FolderId == parent))
+        {
+            <li>@Item(r)</li>
+        }
+        </ul>
+    };
+
+    public static string MethodClass(string method) => "pd-m-" + method.ToLowerInvariant();
+    private static string Short(string m) => m.Length > 5 ? m[..4] : m;
+}

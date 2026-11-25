@@ -1,0 +1,167 @@
+﻿@inherits LayoutComponentBase
+@implements IDisposable
+@inject AppState App
+@inject EnvironmentStore Envs
+@inject CollectionStore Collections
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<div class="pd-shell @(IsProd ? "pd-shell--production" : "") @(_collapsed ? "pd-shell--collapsed" : "")">
+    <a class="pd-skip" href="#main">Skip to content</a>
+    <aside class="pd-rail" aria-label="Application">
+        <div class="pd-rail-top">
+            <a class="pd-brand" href="" aria-label="Blueberry Probe home">
+                <img class="pd-logo" src="logo-mark.png" alt="" width="28" height="28" />
+                <span class="pd-label-text">Blueberry Probe</span>
+            </a>
+            <button type="button" class="pd-icon-btn pd-rail-toggle" @onclick="ToggleRail" aria-label="@(_collapsed ? "Expand navigation" : "Collapse navigation")" aria-expanded="@(!_collapsed ? "true" : "false")" title="@(_collapsed ? "Expand" : "Collapse")">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="@(_collapsed ? "M9 6l6 6-6 6" : "M15 6l-6 6 6 6")" /></svg>
+            </button>
+        </div>
+
+        <label class="pd-env @(IsProd ? "pd-env--production" : "")">
+            <span class="pd-env-label"><span class="pd-env-dot" aria-hidden="true"></span><span>Environment</span></span>
+            <select id="env-select" aria-label="Environment" value="@(App.Environment?.Id.ToString() ?? "")" @onchange="OnEnvChanged">
+                <option value="">No environment</option>
+                @foreach (var e in _envs) { <option value="@e.Id">@e.Name@(e.IsProduction ? " (production)" : "")</option> }
+            </select>
+        </label>
+
+        <nav class="pd-nav" aria-label="Main">
+            <NavLink href="" Match="NavLinkMatch.All" title="Workspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM9 5v14" /></svg><span class="pd-label-text">Workspace</span></NavLink>
+            <NavLink href="collections" title="Collections"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg><span class="pd-label-text">Collections</span></NavLink>
+            <NavLink href="environments" title="Environments"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18" /></svg><span class="pd-label-text">Environments</span></NavLink>
+            <NavLink href="cookies" title="Cookies"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4" /><path d="m11 12 9-9M16 7l3 3M14 9l2 2" /></svg><span class="pd-label-text">Cookies</span></NavLink>
+            <NavLink href="history" title="History"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg><span class="pd-label-text">History</span></NavLink>
+            <NavLink href="import" title="Import"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m-4-4 4 4 4-4M5 20h14" /></svg><span class="pd-label-text">Import</span></NavLink>
+            <NavLink href="help" title="Help"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7M12 17h.01" /></svg><span class="pd-label-text">Help</span></NavLink>
+        </nav>
+
+        <div class="pd-rail-foot">
+            <button type="button" class="pd-rail-btn" @onclick="OpenPalette" title="Search (Ctrl+K)" aria-label="Open command palette">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg><span class="pd-label-text">Search</span><kbd>Ctrl K</kbd>
+            </button>
+            <button type="button" class="pd-rail-btn" @onclick="ToggleTheme" aria-label="Switch between light and dark theme" title="Toggle theme">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="@(_dark ? "M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" : "M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z")" /></svg><span class="pd-label-text">@(_dark ? "Light theme" : "Dark theme")</span>
+            </button>
+        </div>
+    </aside>
+
+    <div class="pd-content">
+        @if (IsProd)
+        {
+            <div class="pd-prod-banner" role="status">Production – requests sent from here affect real systems</div>
+        }
+
+        <main id="main" class="pd-main">
+            @Body
+        </main>
+
+        <footer class="pd-footer">Blueberry Probe runs locally on this computer. Secrets stay on this machine and are never exported. <a href="help/secrets">How secrets are handled</a></footer>
+    </div>
+</div>
+
+@if (_paletteOpen)
+{
+    <div class="pd-palette-backdrop" @onclick="ClosePalette" @onkeydown="OnPaletteKey">
+        <div class="pd-palette pd-card" role="dialog" aria-modal="true" aria-label="Command palette" @onclick:stopPropagation="true">
+            <input id="palette-input" class="pd-input" placeholder="Search commands or saved requests…" aria-label="Search"
+                   @bind="_query" @bind:event="oninput" @bind:after="SearchAsync" @onkeydown="OnPaletteKey" />
+            <ul class="pd-list">
+                @foreach (var c in Commands.Where(c => string.IsNullOrWhiteSpace(_query) || c.Label.Contains(_query, StringComparison.OrdinalIgnoreCase)))
+                {
+                    <li><button type="button" class="pd-listbtn" @onclick="() => Go(c.Url)">@c.Label</button></li>
+                }
+                @foreach (var r in _results)
+                {
+                    <li><button type="button" class="pd-listbtn" @onclick="() => GoToRequest(r.Id)"><span class="pd-method-badge @RequestSidebar.MethodClass(r.Method)">@r.Method</span> @r.Name</button></li>
+                }
+            </ul>
+            <p class="pd-palette-hint"><kbd>Esc</kbd> to close</p>
+        </div>
+    </div>
+}
+
+<div id="blazor-error-ui" data-nosnippet>
+    Something went wrong.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    private List<EnvironmentSummary> _envs = [];
+    private bool _dark, _paletteOpen, _collapsed;
+    private string _query = "";
+    private List<RequestSummary> _results = [];
+    private DotNetObjectReference<MainLayout>? _ref;
+
+    private bool IsProd => App.Environment?.IsProduction == true;
+
+    private static readonly (string Label, string Url)[] Commands =
+    [
+        ("New request", ""), ("Collections", "collections"), ("Environments", "environments"), ("Cookies", "cookies"),
+        ("History", "history"), ("Import", "import"), ("Help", "help")
+    ];
+
+    protected override async Task OnInitializedAsync()
+    {
+        App.Changed += OnChanged;
+        await LoadEnvs();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _ref = DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("pd.registerPalette", _ref);
+        _dark = await JS.InvokeAsync<string>("pd.getTheme") == "dark";
+        _collapsed = await JS.InvokeAsync<bool>("pd.getRail");
+        // Seed data is created asynchronously on first start.
+        await LoadEnvs();
+        if (App.Environment is null && _envs.Count > 0) await App.SelectAsync(_envs[0].Id);
+        StateHasChanged();
+    }
+
+    private async Task LoadEnvs() => _envs = await Envs.ListAsync();
+
+    private void OnChanged() => _ = InvokeAsync(async () =>
+    {
+        try { await LoadEnvs(); } catch (Exception) { /* list refresh is best effort; the next change retries */ }
+        StateHasChanged();
+    });
+
+    private async Task OnEnvChanged(ChangeEventArgs e) =>
+        await App.SelectAsync(Guid.TryParse(e.Value?.ToString(), out var id) ? id : null);
+
+    private async Task ToggleTheme()
+    {
+        _dark = !_dark;
+        await JS.InvokeVoidAsync("pd.setTheme", _dark ? "dark" : "light");
+    }
+
+    private async Task ToggleRail()
+    {
+        _collapsed = !_collapsed;
+        await JS.InvokeVoidAsync("pd.setRail", _collapsed);
+    }
+
+    [JSInvokable]
+    public async Task OpenPalette()
+    {
+        _paletteOpen = true; _query = ""; _results = [];
+        StateHasChanged();
+        await Task.Yield();
+        await JS.InvokeVoidAsync("pd.focus", "palette-input");
+    }
+
+    private void ClosePalette() => _paletteOpen = false;
+    private void OnPaletteKey(KeyboardEventArgs e) { if (e.Key == "Escape") ClosePalette(); }
+
+    private async Task SearchAsync() =>
+        _results = string.IsNullOrWhiteSpace(_query) ? [] : (await Collections.SearchAsync(_query)).Take(8).ToList();
+
+    private void GoToRequest(Guid id) => Go("?id=" + id);
+    private void Go(string url) { _paletteOpen = false; Nav.NavigateTo(url); }
+
+    public void Dispose() { App.Changed -= OnChanged; _ref?.Dispose(); }
+}

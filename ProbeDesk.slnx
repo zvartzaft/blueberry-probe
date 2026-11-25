@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ProbeDesk.Core/ProbeDesk.Core.csproj" />
+    <Project Path="src/ProbeDesk.Import/ProbeDesk.Import.csproj" />
+    <Project Path="src/ProbeDesk.Storage/ProbeDesk.Storage.csproj" />
+    <Project Path="src/ProbeDesk.Web/ProbeDesk.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ProbeDesk.Core.Tests/ProbeDesk.Core.Tests.csproj" />
+    <Project Path="tests/ProbeDesk.Import.Tests/ProbeDesk.Import.Tests.csproj" />
+    <Project Path="tests/ProbeDesk.Storage.Tests/ProbeDesk.Storage.Tests.csproj" />
+    <Project Path="tests/ProbeDesk.Web.Tests/ProbeDesk.Web.Tests.csproj" />
+  </Folder>
+</Solution>

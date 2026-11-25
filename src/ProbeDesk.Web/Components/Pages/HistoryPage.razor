@@ -1,0 +1,38 @@
+﻿@page "/history"
+@inject HistoryStore History
+
+<PageTitle>History – Blueberry Probe</PageTitle>
+<PageHeader Title="History" Subtitle="A metadata-only log of the requests you have sent." HelpSlug="secrets">
+    <button type="button" class="pd-btn pd-btn" disabled="@(_items.Count == 0)" @onclick="ClearAsync">Clear history</button>
+</PageHeader>
+
+<div class="pd-container">
+    <section class="pd-card">
+        <p class="pd-hint">Only the time, method, host, path (without query string), status and duration are stored. Headers, cookies and response bodies are never saved.</p>
+        @if (_items.Count == 0) { <p class="pd-empty">No history yet. Send a request from the workspace and it will show up here.</p> }
+        else
+        {
+            <div class="pd-table-wrap">
+                <table class="pd-table">
+                    <thead><tr><th>Time</th><th>Method</th><th>Host</th><th>Path</th><th>Status</th><th>Duration</th></tr></thead>
+                    <tbody>
+                    @foreach (var h in _items)
+                    {
+                        <tr>
+                            <td>@h.TimeUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
+                            <td><span class="pd-method-badge @RequestSidebar.MethodClass(h.Method)">@h.Method</span></td>
+                            <td>@h.Host</td><td class="pd-mono">@h.Path</td><td>@h.Status</td><td>@h.DurationMs ms</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+</div>
+
+@code {
+    private List<HistoryEntry> _items = [];
+    protected override async Task OnInitializedAsync() => _items = await History.ListAsync();
+    private async Task ClearAsync() { await History.ClearAsync(); _items = []; }
+}

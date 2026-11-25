@@ -1,0 +1,165 @@
+﻿@page "/collections"
+@inject CollectionStore Collections
+@inject AppState App
+@implements IDisposable
+@inject AppPaths Paths
+
+<PageTitle>Collections – Blueberry Probe</PageTitle>
+<PageHeader Title="Collections" Subtitle="Organize saved requests in folders, run a whole folder in order, or export it to share." HelpSlug="getting-started">
+    <a class="pd-btn pd-btn" href="export/postman?strip=true" download>Export Postman</a>
+    <a class="pd-btn pd-btn" href="export/http?strip=true" download>Export .http</a>
+</PageHeader>
+
+<div class="pd-container">
+    <section class="pd-card">
+        <div class="pd-row">
+            <input class="pd-input" type="search" aria-label="Search requests" placeholder="Search requests…" @bind="_query" @bind:event="oninput" @bind:after="LoadAsync" />
+            <input class="pd-input" aria-label="New folder name" placeholder="New folder name" @bind="_newFolder" @onkeydown="OnFolderKey" />
+            <button type="button" class="pd-btn" @onclick="AddFolderAsync">Create folder</button>
+        </div>
+        <p class="pd-hint">Exports remove secrets. Check the file for tokens before you share it.</p>
+        @if (_message is not null) { <p class="pd-note pd-note--error" role="alert">@_message</p> }
+
+        @if (_requests.Count == 0 && _folders.Count == 0)
+        {
+            <p class="pd-empty">Nothing here yet. Save a request from the <a href="">workspace</a> or <a href="import">import</a> a collection.</p>
+        }
+        else if (_query.Length > 0)
+        {
+            <ul class="pd-tree">@foreach (var r in _requests) { <li>@RequestRow(r)</li> }</ul>
+        }
+        else { @Tree(null) }
+    </section>
+
+    @if (_run is not null)
+    {
+        <section class="pd-card" aria-label="Run results">
+            <h2 class="pd-h2">Run results</h2>
+            <div class="pd-table-wrap">
+                <table class="pd-table">
+                    <thead><tr><th>Request</th><th>Result</th><th>Checks</th></tr></thead>
+                    <tbody>
+                    @foreach (var i in _run)
+                    {
+                        <tr>
+                            <td>@i.Name</td>
+                            <td>@(i.Final is null ? ErrorText.For(i.Error!) : $"{i.Final.Response.StatusCode} ({(int)i.Final.Response.Elapsed.TotalMilliseconds} ms)")</td>
+                            <td class="@(i.Final?.Assertions.All(a => a.Passed) == false ? "pd-fail" : "pd-ok")">@(i.Final is null || i.Final.Assertions.Count == 0 ? "–" : $"{i.Final.Assertions.Count(a => a.Passed)}/{i.Final.Assertions.Count} passed")</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    }
+</div>
+
+@code {
+    private static readonly HashSet<string> ReadOnlyMethods = new(StringComparer.OrdinalIgnoreCase) { "GET", "HEAD", "OPTIONS" };
+    private CancellationTokenSource? _cts;
+
+    private string _query = "", _newFolder = "";
+    private string? _message;
+    private List<Folder> _folders = [];
+    private List<RequestSummary> _requests = [];
+    private IReadOnlyList<SequenceItem>? _run;
+    private Guid? _confirmFolder, _deleteFolder;
+    private bool _running;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _folders = await Collections.ListFoldersAsync();
+        _requests = await Collections.SearchAsync(_query);
+    }
+
+    private void CancelRun() => _cts?.Cancel();
+
+    public void Dispose() => _cts?.Cancel();
+
+    private async Task OnFolderKey(KeyboardEventArgs e) { if (e.Key == "Enter") await AddFolderAsync(); }
+
+    private async Task AddFolderAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newFolder)) return;
+        await Collections.CreateFolderAsync(_newFolder.Trim(), null);
+        _newFolder = "";
+        await LoadAsync();
+    }
+
+    private async Task DeleteFolderAsync(Guid id) { _deleteFolder = null; await Collections.DeleteFolderAsync(id); await LoadAsync(); }
+    private async Task DeleteRequestAsync(Guid id) { await Collections.DeleteRequestAsync(id); await LoadAsync(); }
+
+    private async Task RunFolderAsync(Guid? folderId, bool confirmed)
+    {
+        _message = null; _run = null;
+        var requests = await Collections.GetRequestsInFolderAsync(folderId);
+        _running = true;
+        _cts = new CancellationTokenSource();
+        try
+        {
+            var all = new Dictionary<Guid, SavedRequest>();
+            foreach (var s in await Collections.ListRequestsAsync())
+                if (await Collections.GetRequestAsync(s.Id) is { } full) all[s.Id] = full;
+
+            // Include run-first steps: a login POST in a chain also changes state.
+            var mutating = requests.Any(r => FlowRunner.Plan(r, id => all.GetValueOrDefault(id)).Any(p => !ReadOnlyMethods.Contains(p.Spec.Method)));
+            if (App.Environment?.IsProduction == true && mutating && !confirmed) { _confirmFolder = folderId; return; }
+            _confirmFolder = null;
+
+            var runner = new FlowRunner(App.Session, App.Environment, Paths.Spool, Paths.Uploads);
+            _run = await runner.RunSequenceAsync(requests, id => all.GetValueOrDefault(id), _cts.Token);
+        }
+        catch (OperationCanceledException) { _message = "The run was cancelled."; }
+        catch (Exception ex) { _message = ErrorText.For(ex); }
+        finally { await App.PersistSessionCookiesAsync(); _running = false; _cts?.Dispose(); _cts = null; }
+    }
+
+    private RenderFragment RequestRow(RequestSummary r) => __builder =>
+    {
+        <div class="pd-row pd-row--item">
+            <a class="pd-tree-item pd-grow" href="?id=@r.Id">
+                <span class="pd-method-badge @RequestSidebar.MethodClass(r.Method)">@r.Method</span>
+                <span class="pd-tree-name">@r.Name</span>
+            </a>
+            <button type="button" class="pd-icon-btn" aria-label="Delete @r.Name" title="Delete" @onclick="() => DeleteRequestAsync(r.Id)">✕</button>
+        </div>
+    };
+
+    private RenderFragment Tree(Guid? parent) => __builder =>
+    {
+        <ul class="pd-tree">
+        @foreach (var f in _folders.Where(f => f.ParentId == parent))
+        {
+            <li>
+                <details open>
+                    <summary class="pd-tree-folder">@f.Name</summary>
+                    <div class="pd-row">
+                        @if (_running) { <button type="button" class="pd-btn pd-btn--sm" @onclick="CancelRun">Cancel run</button> }
+                        else { <button type="button" class="pd-btn pd-btn--sm" @onclick="() => RunFolderAsync(f.Id, false)">Run all in order</button> }
+                        <a class="pd-btn pd-btn--sm" href="export/postman?folder=@f.Id" download>Export</a>
+                        @if (_deleteFolder == f.Id)
+                        {
+                            <span>Delete <strong>@f.Name</strong> and its contents?</span>
+                            <button type="button" class="pd-btn pd-btn--danger pd-btn--sm" @onclick="() => DeleteFolderAsync(f.Id)">Yes, delete</button>
+                            <button type="button" class="pd-btn pd-btn--sm" @onclick="() => _deleteFolder = null">Keep</button>
+                        }
+                        else { <button type="button" class="pd-btn pd-btn--sm pd-btn--ghost-danger" @onclick="() => _deleteFolder = f.Id">Delete folder</button> }
+                    </div>
+                    @if (_confirmFolder == f.Id)
+                    {
+                        <div class="pd-banner pd-banner--danger"><strong>Production:</strong> this folder contains requests that change data.
+                            <button type="button" class="pd-btn pd-btn--danger pd-btn--sm" @onclick="() => RunFolderAsync(f.Id, true)">Confirm and run</button></div>
+                    }
+                    @Tree(f.Id)
+                </details>
+            </li>
+        }
+        @foreach (var r in _requests.Where(r => r.FolderId == parent))
+        {
+            <li>@RequestRow(r)</li>
+        }
+        </ul>
+    };
+}

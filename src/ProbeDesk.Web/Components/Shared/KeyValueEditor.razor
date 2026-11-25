@@ -1,0 +1,36 @@
+@foreach (var item in Items)
+{
+    <div class="pd-kv">
+        <input class="pd-input" aria-label="@NameLabel" placeholder="@NameLabel" autocomplete="off" @bind="item.Name" @bind:event="oninput" @bind:after="Changed" />
+        <input class="pd-input" aria-label="@ValueLabel" placeholder="@ValueLabel" autocomplete="off" @bind="item.Value" @bind:event="oninput" @bind:after="Changed" />
+        <button type="button" class="pd-icon-btn" aria-label="Remove @NameLabel.ToLowerInvariant()" title="Remove" @onclick="() => Remove(item)">✕</button>
+    </div>
+}
+@if (Items.Count == 0 && EmptyText is not null)
+{
+    <p class="pd-empty">@EmptyText</p>
+}
+<button type="button" class="pd-btn pd-btn--ghost" @onclick="Add">+ @AddLabel</button>
+
+@code {
+    [Parameter, EditorRequired] public List<Kv> Items { get; set; } = [];
+    [Parameter] public EventCallback OnChange { get; set; }
+    [Parameter] public string NameLabel { get; set; } = "Name";
+    [Parameter] public string ValueLabel { get; set; } = "Value";
+    [Parameter] public string AddLabel { get; set; } = "Add";
+    [Parameter] public string? EmptyText { get; set; }
+
+    private Task Changed() => OnChange.InvokeAsync();
+
+    private Task Add()
+    {
+        Items.Add(new Kv());
+        return OnChange.InvokeAsync();
+    }
+
+    private Task Remove(Kv item)
+    {
+        Items.Remove(item);
+        return OnChange.InvokeAsync();
+    }
+}
